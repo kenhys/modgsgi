@@ -4,8 +4,8 @@
 ##
 
 builddir=.
-top_srcdir=/usr
-top_builddir=/usr
+top_srcdir=/usr/lib/httpd
+top_builddir=/usr/lib/httpd
 include /usr/share/httpd/build/special.mk
 
 #   the used tools
