@@ -92,19 +92,22 @@ static ScmObj build_env(request_rec *r) {
     ap_add_cgi_vars(r);
     ap_add_common_vars(r);
 
-    // multithread?
     if (ap_mpm_query(AP_MPMQ_IS_THREADED, &mpm_query_info) == APR_SUCCESS) {
         is_multithread = (mpm_query_info == AP_MPMQ_STATIC || mpm_query_info == AP_MPMQ_DYNAMIC) ? SCM_TRUE : SCM_FALSE;
     }
 
-    // multiprocess?
     if (ap_mpm_query(AP_MPMQ_IS_FORKED, &mpm_query_info) == APR_SUCCESS) {
         is_multiprocess = (mpm_query_info == AP_MPMQ_STATIC || mpm_query_info == AP_MPMQ_DYNAMIC) ? SCM_TRUE : SCM_FALSE;
     }
 
-    // https?
     url_scheme = apr_table_get(r->subprocess_env, "HTTPS") == NULL ? SCM_MAKE_STR("http") : SCM_MAKE_STR("https");
 
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.version"), SCM_MAKE_STR("0.1"), env); // Is array better than string to represent GSGI specification version?
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.input"), SCM_NIL, env); // TODO
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.errors"), SCM_NIL, env); // TODO
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.run_once"), SCM_NIL, env); // TODO
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.nonblocking"), SCM_FALSE, env); // Does apache support non-blocking IO?
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.streaming"), SCM_FALSE, env); // Does apache support streaming IO?
     env = Scm_Acons(SCM_MAKE_STR("gsgi.multiprocess"), is_multiprocess, env);
     env = Scm_Acons(SCM_MAKE_STR("gsgi.multithread"), is_multithread, env);
     env = Scm_Acons(SCM_MAKE_STR("gsgi.url_scheme"), url_scheme, env);
