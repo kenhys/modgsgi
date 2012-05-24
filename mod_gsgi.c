@@ -44,6 +44,7 @@
 #include "ap_config.h"
 #include "apr_thread_proc.h"
 #include "apr_thread_cond.h"
+#include "ap_mpm.h"
 #include <gauche.h>
 #include <strings.h>
 
@@ -85,11 +86,28 @@ static ScmObj gsgi_get_application(request_rec* r, const char* path) {
  * Build environment variables.
  */
 static ScmObj build_env(request_rec *r) {
-    int i = 0;
-    ScmObj env = SCM_NIL;
+    int i = 0, mpm_query_info;
+    ScmObj env = SCM_NIL, is_multithread = SCM_FALSE, is_multiprocess = SCM_FALSE, url_scheme;
 
     ap_add_cgi_vars(r);
     ap_add_common_vars(r);
+
+    // multithread?
+    if (ap_mpm_query(AP_MPMQ_IS_THREADED, &mpm_query_info) == APR_SUCCESS) {
+        is_multithread = (mpm_query_info == AP_MPMQ_STATIC || mpm_query_info == AP_MPMQ_DYNAMIC) ? SCM_TRUE : SCM_FALSE;
+    }
+
+    // multiprocess?
+    if (ap_mpm_query(AP_MPMQ_IS_FORKED, &mpm_query_info) == APR_SUCCESS) {
+        is_multiprocess = (mpm_query_info == AP_MPMQ_STATIC || mpm_query_info == AP_MPMQ_DYNAMIC) ? SCM_TRUE : SCM_FALSE;
+    }
+
+    // https?
+    url_scheme = apr_table_get(r->subprocess_env, "HTTPS") == NULL ? SCM_MAKE_STR("http") : SCM_MAKE_STR("https");
+
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.multiprocess"), is_multiprocess, env);
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.multithread"), is_multithread, env);
+    env = Scm_Acons(SCM_MAKE_STR("gsgi.url_scheme"), url_scheme, env);
 
     // modify PATH_INFO
     apr_table_set(r->subprocess_env, "PATH_INFO", r->uri);
@@ -102,6 +120,7 @@ static ScmObj build_env(request_rec *r) {
     }
 
     // copy r->headers_in
+    // http headers are case insensitive
     head = apr_table_elts(r->headers_in);
     entries = (apr_table_entry_t*) head->elts;
     for (i = 0; i < head->nelts; ++i) {
