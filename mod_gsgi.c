@@ -159,21 +159,31 @@ static int gsgi_handle_status(request_rec* r, ScmObj status) {
 /**
  * Handle headers.
  */
-static int gsgi_handle_headers(request_rec* r, ScmObj headers) {
-    ScmObj rest;
-    ScmObj header;
-
-    // content-type
-    ScmObj content_type_pair = Scm_Assoc(SCM_MAKE_STR("Content-Type"), headers, SCM_CMP_EQUAL);
-    char* content_type = Scm_GetString(SCM_STRING(SCM_CDR(content_type_pair)));
-    r->content_type = content_type;
+static int gsgi_handle_headers(request_rec* r, ScmObj headers, ScmObj body) {
+    ScmObj rest, header;
+    int has_content_length = 0;
+    char *key;
 
     SCM_FOR_EACH(rest, headers) {
         header = Scm_Car(rest);
-        char* key = Scm_GetString(SCM_STRING(Scm_Car(header)));
-        char* value = Scm_GetString(SCM_STRING(Scm_Cdr(header)));
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "[header] %s: %s", key, value);
-        apr_table_set(r->headers_out, key, value);
+        key = Scm_GetString(SCM_STRING(Scm_Car(header)));
+
+        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "header: %s", Scm_GetString(SCM_STRING(Scm_Sprintf("%S", header))));
+
+        if (strcasecmp(key, "Content-Type") == 0) {
+            r->content_type = Scm_GetString(SCM_STRING(Scm_Cdr(header)));
+        }
+        else if (strcasecmp(key, "Content-Length") == 0) {
+            has_content_length = 1;
+            r->clength = (apr_off_t) Scm_Length(Scm_Cdr(header));
+        }
+        else {
+            apr_table_set(r->headers_out, key, Scm_GetString(SCM_STRING(Scm_Cdr(header))));
+        }
+    }
+
+    if (has_content_length == 0) {
+        r->clength = (apr_off_t) Scm_Length(body);
     }
 
     return OK;
@@ -183,8 +193,7 @@ static int gsgi_handle_headers(request_rec* r, ScmObj headers) {
  * Handle body.
  */
 static int gsgi_handle_body(request_rec* r, ScmObj body) {
-    ScmObj response = Scm_StringJoin(body, SCM_STRING(SCM_MAKE_STR("\n")), SCM_STRING_JOIN_SUFFIX);
-    ap_rprintf(r, "%s", Scm_GetStringConst(SCM_STRING(response)));
+    ap_rprintf(r, "%s", Scm_GetStringConst(SCM_STRING(body)));
     return OK;
 }
 
@@ -220,7 +229,7 @@ static int gsgi_handler(request_rec *r)
     int result = 0;
     gsgi_directory_config *dconfig;
     ScmEvalPacket epak;
-    ScmObj application, env;
+    ScmObj application, env, status, headers, body;
 
     if (strcmp(r->handler, GSGI_HANDLER_NAME)) {
         return DECLINED;
@@ -256,22 +265,27 @@ static int gsgi_handler(request_rec *r)
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
+
+    status = epak.results[0];
+    headers = epak.results[1];
+    body = Scm_StringJoin(epak.results[2], SCM_STRING(SCM_MAKE_STR("")), SCM_STRING_JOIN_SUFFIX);
+
     // ouput status
-    rc = gsgi_handle_status(r, epak.results[0]);
+    rc = gsgi_handle_status(r, status);
     if (rc != OK) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "gsgi_handle_status() failed.");
         return rc;
     }
 
     // output response headers
-    rc = gsgi_handle_headers(r, epak.results[1]);
+    rc = gsgi_handle_headers(r, headers, body);
     if (rc != OK) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "gsgi_handle_headers() failed.");
         return rc;
     }
 
     // output response body
-    rc = gsgi_handle_body(r, epak.results[2]);
+    rc = gsgi_handle_body(r, body);
     if (rc != OK) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "gsgi_handle_body() failed.");
         return rc;
