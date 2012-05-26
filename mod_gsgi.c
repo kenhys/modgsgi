@@ -51,18 +51,22 @@
 module AP_MODULE_DECLARE_DATA gsgi_module;
 
 typedef struct {
-    char* script_file_path;
-    char* add_load_path;
+    const char* script_file_path;
+    const char* add_load_path;
+    int is_debug;
 } gsgi_directory_config;
 
 static const char* GSGI_HANDLER_NAME = "gsgi";
 static const char* GSGI_ENTRY_POINT_NAME = "application";
+static const int GSGI_DEBUG_FLAG = 1;
+
+#define GSGI_IS_DEBUG(flag) (flag == GSGI_DEBUG_FLAG)
 
 /**
  * Get application procedure from script.
  */
 static ScmObj gsgi_get_application(request_rec* r, const char* path) {
-    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "path: %s", path);
+    gsgi_directory_config *config = ap_get_module_config(r->per_dir_config, &gsgi_module);
     ScmLoadPacket lpak;
 
     if (Scm_Load(path, 0, &lpak) < 0) {
@@ -77,7 +81,9 @@ static ScmObj gsgi_get_application(request_rec* r, const char* path) {
         return SCM_NIL;
     }
 
-    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "load success: %s", path);
+    if(GSGI_IS_DEBUG(config->is_debug)) {
+        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "load success: %s", path);
+    }
 
     return application;
 }
@@ -87,7 +93,8 @@ static ScmObj gsgi_get_application(request_rec* r, const char* path) {
  */
 static ScmObj build_env(request_rec *r) {
     int i = 0, mpm_query_info;
-    ScmObj env = SCM_NIL, is_multithread = SCM_FALSE, is_multiprocess = SCM_FALSE, url_scheme;
+    ScmHashTable *env = SCM_HASH_TABLE(Scm_MakeHashTableSimple(SCM_HASH_STRING, 20));
+    ScmObj is_multithread = SCM_FALSE, is_multiprocess = SCM_FALSE, url_scheme;
 
     ap_add_cgi_vars(r);
     ap_add_common_vars(r);
@@ -102,15 +109,16 @@ static ScmObj build_env(request_rec *r) {
 
     url_scheme = apr_table_get(r->subprocess_env, "HTTPS") == NULL ? SCM_MAKE_STR("http") : SCM_MAKE_STR("https");
 
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.version"), SCM_MAKE_STR("0.1"), env); // Is array better than string to represent GSGI specification version?
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.input"), SCM_NIL, env); // TODO
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.errors"), SCM_NIL, env); // TODO
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.run_once"), SCM_NIL, env); // TODO
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.nonblocking"), SCM_FALSE, env); // Does apache support non-blocking IO?
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.streaming"), SCM_FALSE, env); // Does apache support streaming IO?
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.multiprocess"), is_multiprocess, env);
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.multithread"), is_multithread, env);
-    env = Scm_Acons(SCM_MAKE_STR("gsgi.url_scheme"), url_scheme, env);
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.version"), SCM_MAKE_STR("0.1"), 0); // Is array better than string to represent GSGI specification version?
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.input"), SCM_NIL, 0); // TODO
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.errors"), SCM_NIL, 0); // TODO
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.run_once"), SCM_NIL, 0); // TODO
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.nonblocking"), SCM_FALSE, 0); // Does apache support non-blocking IO?
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.streaming"), SCM_FALSE, 0); // Does apache support streaming IO?
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.multiprocess"), is_multiprocess, 0);
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.multithread"), is_multithread, 0);
+    Scm_HashTableSet(env, SCM_MAKE_STR("gsgi.url_scheme"), url_scheme, 0);
+
 
     // modify PATH_INFO
     apr_table_set(r->subprocess_env, "PATH_INFO", r->uri);
@@ -119,7 +127,7 @@ static ScmObj build_env(request_rec *r) {
     const apr_array_header_t *head = apr_table_elts(r->subprocess_env);
     apr_table_entry_t *entries = (apr_table_entry_t*) head->elts;
     for (i = 0; i < head->nelts; ++i) {
-        env = Scm_Acons(SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), env);
+        Scm_HashTableSet(env, SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), 0);
     }
 
     // copy r->headers_in
@@ -128,17 +136,17 @@ static ScmObj build_env(request_rec *r) {
     entries = (apr_table_entry_t*) head->elts;
     for (i = 0; i < head->nelts; ++i) {
         if (strcasecmp("content-type", entries[i].key) == 0) {
-            env = Scm_Acons(SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), env);
+            Scm_HashTableSet(env, SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), 0);
         }
         else if (strcasecmp("content-length", entries[i].key) == 0) {
-            env = Scm_Acons(SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), env);
+            Scm_HashTableSet(env, SCM_MAKE_STR(entries[i].key), Scm_StringToNumber(SCM_STRING(SCM_MAKE_STR(entries[i].val)), 10, TRUE), 0);
         }
         else if (strncasecmp("http_", entries[i].key, 5) == 0) {
-            env = Scm_Acons(SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), env);
+            Scm_HashTableSet(env, SCM_MAKE_STR(entries[i].key), SCM_MAKE_STR(entries[i].val), 0);
         }
     }
 
-    return env;
+    return SCM_OBJ(env);
 }
 
 /**
@@ -160,25 +168,31 @@ static int gsgi_handle_status(request_rec* r, ScmObj status) {
  * Handle headers.
  */
 static int gsgi_handle_headers(request_rec* r, ScmObj headers, ScmObj body) {
-    ScmObj rest, header;
+    gsgi_directory_config *config = ap_get_module_config(r->per_dir_config, &gsgi_module);
+    ScmObj entry_value;
+    ScmDictEntry *entry;
     int has_content_length = 0;
     char *key;
+    ScmHashIter iter;
 
-    SCM_FOR_EACH(rest, headers) {
-        header = Scm_Car(rest);
-        key = Scm_GetString(SCM_STRING(Scm_Car(header)));
+    Scm_HashIterInit(&iter, SCM_HASH_TABLE_CORE(headers));
+    while ((entry = Scm_HashIterNext(&iter)) != NULL) {
+        key = Scm_GetString(SCM_STRING(SCM_DICT_KEY(entry)));
+        entry_value = SCM_DICT_VALUE(entry);
 
-        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "header: %s", Scm_GetString(SCM_STRING(Scm_Sprintf("%S", header))));
+        if(GSGI_IS_DEBUG(config->is_debug)) {
+            ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "header: %s", Scm_GetString(SCM_STRING(Scm_Sprintf("%S", entry))));
+        }
 
         if (strcasecmp(key, "Content-Type") == 0) {
-            r->content_type = Scm_GetString(SCM_STRING(Scm_Cdr(header)));
+            r->content_type = Scm_GetString(SCM_STRING(entry_value));
         }
         else if (strcasecmp(key, "Content-Length") == 0) {
             has_content_length = 1;
-            r->clength = (apr_off_t) Scm_Length(Scm_Cdr(header));
+            r->clength = (apr_off_t) Scm_Length(entry_value);
         }
         else {
-            apr_table_set(r->headers_out, key, Scm_GetString(SCM_STRING(Scm_Cdr(header))));
+            apr_table_set(r->headers_out, key, Scm_GetString(SCM_STRING(entry_value)));
         }
     }
 
@@ -204,6 +218,7 @@ static gsgi_directory_config* gsgi_allocate_directory_config(apr_pool_t* p) {
     gsgi_directory_config* config = (gsgi_directory_config*) apr_pcalloc(p, sizeof(gsgi_directory_config));
     config->script_file_path = "";
     config->add_load_path = "";
+    config->is_debug = 0;
     return config;
 }
 
@@ -223,6 +238,22 @@ static const char* gsgi_add_load_path(cmd_parms* cmd, void* mconfig, const char*
     return NULL;
 }
 
+/**
+ * Set debug flag.
+ */
+static const char* gsgi_set_is_debug(cmd_parms* cmd, void* mconfig, int debug_flag) {
+    gsgi_directory_config *config = (gsgi_directory_config*) mconfig;
+
+    if (debug_flag != 0) {
+        config->is_debug = GSGI_DEBUG_FLAG;
+    }
+
+    return NULL;
+}
+
+/**
+ * mod_gsgi entry point.
+ */
 static int gsgi_handler(request_rec *r)
 {
     int rc = 0;
@@ -239,7 +270,15 @@ static int gsgi_handler(request_rec *r)
 
     env = build_env(r);
 
-    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "env: %s", Scm_GetString(SCM_STRING(Scm_Sprintf("%S", env))));
+    if (GSGI_IS_DEBUG(dconfig->is_debug)) {
+        ScmHashIter iter;
+        ScmDictEntry *entry;
+
+        Scm_HashIterInit(&iter, SCM_HASH_TABLE_CORE(env));
+        while ((entry = Scm_HashIterNext(&iter)) != NULL) {
+            ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "env: %s", Scm_GetString(SCM_STRING(Scm_Sprintf("%S", entry))));
+        }
+    }
 
     Scm_AddLoadPath(dconfig->add_load_path, FALSE);
 
@@ -259,7 +298,6 @@ static int gsgi_handler(request_rec *r)
 
     if (epak.numResults != 3) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "GSGI application must return (values http-status-code http-response-headers http-response-body).");
-
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -312,6 +350,7 @@ static void gsgi_register_hooks(apr_pool_t *p) {
  */
 static const command_rec gsgi_commands[] = {
     AP_INIT_TAKE1("GSGIScriptFilePath", gsgi_set_script_file_path, NULL, ACCESS_CONF, "script file path"),
+    AP_INIT_FLAG("GSGIDebug", gsgi_set_is_debug, NULL, ACCESS_CONF, "debug flag"),
     AP_INIT_RAW_ARGS("GSGIAddLoadPath", gsgi_add_load_path, NULL, ACCESS_CONF, "add load path"),
     {NULL}
 };
