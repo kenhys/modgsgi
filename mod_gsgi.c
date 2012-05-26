@@ -289,8 +289,6 @@ static int gsgi_handler(request_rec *r)
         return rc;
     }
 
-    Scm_Cleanup();
-
     return OK;
 }
 
