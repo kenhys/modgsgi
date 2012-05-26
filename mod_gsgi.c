@@ -237,8 +237,6 @@ static int gsgi_handler(request_rec *r)
 
     dconfig = ap_get_module_config(r->per_dir_config, &gsgi_module);
 
-    Scm_Init(GAUCHE_SIGNATURE);
-
     env = build_env(r);
 
     ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "env: %s", Scm_GetString(SCM_STRING(Scm_Sprintf("%S", env))));
@@ -291,15 +289,28 @@ static int gsgi_handler(request_rec *r)
         return rc;
     }
 
+    Scm_Cleanup();
+
     return OK;
 }
 
+/*
+ * Initialize Gauche.
+ */
+static void gsgi_child_init(apr_pool_t *pchild, server_rec *server) {
+    Scm_Init(GAUCHE_SIGNATURE);
+}
+
+/**
+ * Register hooks.
+ */
 static void gsgi_register_hooks(apr_pool_t *p) {
+    ap_hook_child_init(gsgi_child_init, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_handler(gsgi_handler, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 /**
- * command
+ * Command list.
  */
 static const command_rec gsgi_commands[] = {
     AP_INIT_TAKE1("GSGIScriptFilePath", gsgi_set_script_file_path, NULL, ACCESS_CONF, "script file path"),
