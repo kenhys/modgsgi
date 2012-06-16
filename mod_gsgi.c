@@ -53,6 +53,7 @@ module AP_MODULE_DECLARE_DATA gsgi_module;
 typedef struct {
     const char* script_file_path;
     const char* add_load_path;
+    const char* gauche_init_scm;
     int is_debug;
 } gsgi_directory_config;
 
@@ -68,6 +69,14 @@ static const int GSGI_DEBUG_FLAG = 1;
 static ScmObj gsgi_get_application(request_rec* r, const char* path) {
     gsgi_directory_config *config = ap_get_module_config(r->per_dir_config, &gsgi_module);
     ScmLoadPacket lpak;
+
+    if (config->gauche_init_scm) {
+        if (Scm_Load(config->gauche_init_scm, 0, &lpak) < 0) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "load fail: %s %s", config->gauche_init_scm,
+                          Scm_GetString(SCM_STRING(SCM_ERROR_MESSAGE(lpak.exception))));
+            return SCM_NIL;
+        }
+    }
 
     if (Scm_Load(path, 0, &lpak) < 0) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "load fail: %s %s", path, Scm_GetString(SCM_STRING(SCM_ERROR_MESSAGE(lpak.exception))));
@@ -232,6 +241,12 @@ static const char* gsgi_set_script_file_path(cmd_parms* cmd, void* mconfig, cons
     return NULL;
 }
 
+static const char* gsgi_gauche_init_scm(cmd_parms* cmd, void* mconfig, const char* arg) {
+    gsgi_directory_config *config = (gsgi_directory_config*) mconfig;
+    config->gauche_init_scm = arg;
+    return NULL;
+}
+
 static const char* gsgi_add_load_path(cmd_parms* cmd, void* mconfig, const char* args) {
     gsgi_directory_config *config = (gsgi_directory_config*) mconfig;
     config->add_load_path = args;
@@ -352,6 +367,7 @@ static const command_rec gsgi_commands[] = {
     AP_INIT_TAKE1("GSGIScriptFilePath", gsgi_set_script_file_path, NULL, ACCESS_CONF, "script file path"),
     AP_INIT_FLAG("GSGIDebug", gsgi_set_is_debug, NULL, ACCESS_CONF, "debug flag"),
     AP_INIT_RAW_ARGS("GSGIAddLoadPath", gsgi_add_load_path, NULL, ACCESS_CONF, "add load path"),
+    AP_INIT_TAKE1("GSGIGaucheInitScm", gsgi_gauche_init_scm, NULL, ACCESS_CONF, "gauche-init.scm path"),
     {NULL}
 };
 
